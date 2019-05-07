@@ -6,6 +6,7 @@ from nav_msgs.msg import OccupancyGrid
 import tf_conversions
 from sklearn.neighbors import NearestNeighbors as KNN
 from std_msgs.msg import Int8MultiArray
+from NDT import ndt
 
 
 class occupancy_grid():
@@ -18,10 +19,13 @@ class occupancy_grid():
 
     def update_map(self,scan,X=[0,0,0],initialize = 0):
         Z = self.scan2cart(X,scan,self.max_rays)
-
+        
         if initialize == 0:
             self.new_scan = Z
-            X = NDT(self.last_scan,self.new_scan) + self.last_pose
+            T0 = X - self.last_pose
+            Ndt = ndt(self.last_scan,self.new_scan,T0)
+            T = Ndt.calc_t()
+            X = T + self.last_pose
             self.last_scan = self.new_scan
             self.last_pose = X
         else:
