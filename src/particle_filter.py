@@ -30,7 +30,6 @@ class ParticleFilter(object):
         self.init()   
         self.i_TH = 0.0  
         self.i_MU = [0.0 ,0.0]
-        self.nbrs = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.scan.obs())
         self.M_idxs = (np.linspace(0,len(self.scan.z.ranges)-1,20)).astype(np.int32)
         rospy.Subscriber('/odom', Odometry, self.get_odom) 
         rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.init_pose)
@@ -47,6 +46,7 @@ class ParticleFilter(object):
         current_time = msg.header.stamp.secs 
         self.dt = current_time - self.last_time
         self.last_time = current_time
+        self.ind_map_update()
         if np.abs(self.odom.twist.twist.linear.x)>0.05 or np.abs( self.odom.twist.twist.angular.z)>0.05:
             self.prediction()
         if self.update_TH() > 0.1: #and self.ctr%1 == 0:
@@ -54,6 +54,7 @@ class ParticleFilter(object):
             self.i_TH = 0.0
             self.ctr = 1
             self.resampling()
+            
             #if 1/np.sum(self.weights**2) < self.Np/5:
              #   self.resampling()
 
@@ -112,7 +113,8 @@ class ParticleFilter(object):
 
 
     def ind_map_update(self):
-        self.i_MU += [self.odom.twist.twist.linear.x , self.odom.twist.twist.angular.z] * self.dt
+        self.i_MU[0] += self.odom.twist.twist.linear.x * self.dt
+        self.i_MU[1] += self.odom.twist.twist.angular.z * self.dt
 
     def likelihood_fild(self,map):
         print "likelihood"
