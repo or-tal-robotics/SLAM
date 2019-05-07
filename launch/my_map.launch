@@ -2,7 +2,7 @@
 
 <launch>
 
-<include file="$(find mcl_pi_simulation)/launch/empty_world.launch" >
+<include file="$(find SLAM)/launch/empty_world.launch" >
   <arg name="world_name" value="$(find SLAM)/maps/model.world"/>
 </include>
 

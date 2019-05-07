@@ -8,5 +8,6 @@
 
   <!-- push table_description to factory and spawn robot in gazebo -->
   <node name="spawn_ABot" pkg="gazebo_ros" type="spawn_model" args="-urdf -model simple_model -param robot_description" respawn="false" output="screen" />
-
+  <!--<node pkg="tf" type="static_transform_publisher" name="map_odom_static_broadcaster" args="0 0 0 0 0 0 map /odom 100" /> -->
+  <node pkg="tf" type="static_transform_publisher" name="world_map_static_broadcaster" args="0 0 0 1.57 0 0 world /map 100" />
 </launch>

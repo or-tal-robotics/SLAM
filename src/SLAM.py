@@ -9,8 +9,9 @@ def main():
 
     rospy.init_node('SLAM', anonymous = True)
     PF = ParticleFilter(Np=100)
-    OG = occupancy_grid(max_rays = 100,grid_size = [30,30])
-    OG.update_map(scan = PF.scan.z)
+    PF.init()
+    OG = occupancy_grid(max_rays = 100,grid_size = [30,30],initial_pose = [15,15])
+    OG.update_map(scan = PF.scan.z, initialize=1)
     PF.get_map(OG)
     r = rospy.Rate(5)
     OG.publish_occupancy_grid()
@@ -19,9 +20,10 @@ def main():
         OG.publish_occupancy_grid()
         print 'runing!'
         r.sleep()
-        if PF.i_MU[0] > 0.1 or PF.i_MU[1] > 0.01:
+        PF.pub()
+        if PF.i_MU[0] > 0.05 or PF.i_MU[1] > 0.05:
             #print np.mean(PF.particles,axis = 0).shape
-            OG.update_map(X = np.mean(PF.particles,axis = 0),scan = PF.scan.z)
+            OG.update_map(X = np.mean(PF.particles,axis = 0),scan = PF.scan.z, initialize=0)
             PF.get_map(OG)
             PF.i_MU = [0.0,0.0]
             print 'updated map'

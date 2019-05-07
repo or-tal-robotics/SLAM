@@ -4,7 +4,7 @@
 <include file="$(find SLAM)/launch/joystick_ABot.launch" />
 
   <node name="slam" pkg="SLAM" type="SLAM.py" output="screen">
-  <param name="laser_frame" type="string" value="laser_link_ABot"/>
+  <param name="laser_frame" type="string" value="base_laser"/>
   </node>
 
 
