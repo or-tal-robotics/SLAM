@@ -6,7 +6,7 @@ from nav_msgs.msg import OccupancyGrid
 import tf_conversions
 from sklearn.neighbors import NearestNeighbors as KNN
 from std_msgs.msg import Int8MultiArray
-from NDT import ndt
+from NDT_or import ndt
 
 
 class occupancy_grid():
@@ -24,7 +24,7 @@ class occupancy_grid():
             self.new_scan = Z
             T0 = X - self.last_pose
             Ndt = ndt(self.last_scan,self.new_scan,T0)
-            T = Ndt.calc_t()
+            T = Ndt.T
             X = T + self.last_pose
             self.last_scan = self.new_scan
             self.last_pose = X
