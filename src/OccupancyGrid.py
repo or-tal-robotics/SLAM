@@ -58,7 +58,7 @@ class occupancy_grid():
         z_star = self.scan2cart(robot_origin,scan,20)
         _, indices = self.nbrs.kneighbors(z_star.T)
         z = self.objects_map[indices].reshape(z_star.shape)
-        print np.prod(np.exp(-s* np.linalg.norm(z_star-z,axis=1)**2))
+        #print np.prod(np.exp(-s* np.linalg.norm(z_star-z,axis=1)**2))
         return np.prod(np.exp(-s* np.linalg.norm(z_star-z,axis=1)**2))
 
 
