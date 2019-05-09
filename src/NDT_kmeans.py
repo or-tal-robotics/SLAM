@@ -5,8 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 
 class ndt():
-    def __init__(self,last_scan, new_scan,T0 = [0,0,0],K=5, Niter = 100, th = 0.00001):
-        self.res = res
+    def __init__(self,last_scan, new_scan,T0 = [0,0,0],K=6, Niter = 1000, th = 1e-10):
         self.Niter = Niter
         self.T = np.array(T0).astype(np.float)
         self.th = th
@@ -17,42 +16,44 @@ class ndt():
        
             
     def fit(self):
-        self.kmeans = KMeans(n_clusters=K, random_state=0).fit(self.last_scan)
+        self.kmeans = KMeans(n_clusters=self.K, random_state=0).fit(self.last_scan)
         self.Mu = []
         self.Sigma = []
         self.kernel_idxs = []
         labels = self.kmeans.predict(self.last_scan)
-        for ii in range(K):
+        for ii in range(self.K):
             if len(self.last_scan[labels==ii])>=3:
                 self.kernel_idxs.append(ii)
                 self.Mu.append(self.kmeans.cluster_centers_[ii])
-                self.Sigma.append(np.cov(self.last_scan[labels==ii].T) + 0.1*np.eye(2))
+                self.Sigma.append(np.cov(self.last_scan[labels==ii].T)  + 0.5*np.eye(2))
+               
                 
     def predict(self):
         for kk in range(self.Niter):
             new_scan_trans = self.transform(self.new_scan,self.T)
             #print(new_scan_trans)
-            q, new_scan_trans_filtered, covs = self.calc_residual(new_scan_trans)
-            new_scan_trans_filtered = np.concatenate(new_scan_trans_filtered)
-            q = np.concatenate(q)
+            self.q, self.new_scan_trans_filtered, self.covs = self.calc_residual(new_scan_trans)
+            
             #print(q.shape)
             dT = np.array([0.0, 0.0, 0.0])
-            for ii in range(len(new_scan_trans_filtered)):
-                J = self.calc_Jacobi(new_scan_trans_filtered[ii],self.T[2])
-                qq = q[ii].dot(np.matmul( np.linalg.inv(covs[ii]),J))
-                dq = self.calc_sd(new_scan_trans_filtered[ii],self.T[2])
+            for ii in range(len(self.new_scan_trans_filtered)):
+                self.J = self.calc_Jacobi(self.new_scan_trans_filtered[ii],self.T[2])
+                qq = self.q[ii].dot(np.matmul( np.linalg.inv(self.covs[ii]),self.J))
+                #print(qq)
+                dq = self.calc_sd(self.new_scan_trans_filtered[ii],self.T[2])
                 dtemp = np.zeros((3,3))
                 #print(q[ii],np.linalg.inv(covs[ii]),dq)
-                dtemp[2,2] = q[ii].dot(np.linalg.inv(covs[ii]).dot(dq))
-                self.g = qq * np.exp(-0.5*q[ii].dot(np.linalg.inv(covs[ii]).dot(q[ii].T)))
-                self.H = -np.exp(-0.5*q[ii].dot(np.linalg.inv(covs[ii]).dot(q[ii].T))) * (np.outer(-qq,-qq) + dtemp - np.matmul(J.T,np.matmul(np.linalg.inv(covs[ii]),J))) + 0.000000000001*np.eye(3)
+                dtemp[2,2] = self.q[ii].dot(np.linalg.inv(self.covs[ii]).dot(dq))
+                self.g = qq * np.exp(-0.5*self.q[ii].dot(np.linalg.inv(self.covs[ii]).dot(self.q[ii].T)))
+                self.H = -np.exp(-0.5*self.q[ii].dot(np.linalg.inv(self.covs[ii]).dot(self.q[ii].T))) * (np.outer(-qq,-qq) - dtemp - np.matmul(self.J.T,np.matmul(np.linalg.inv(self.covs[ii]),self.J))+ 0.00001*np.eye(3)) 
 
                 dT += -np.linalg.inv(self.H).dot(self.g)
-                
-            self.T += dT
-            if np.sum(np.abs(dT)) < self.th:
+                #dT[0] *= -1
+                #dT[1] *= -1
+            self.T += 0.5*dT/np.float(len(self.new_scan_trans_filtered))
+            '''if np.sum(np.abs(self.g)) < self.th:
                 print('Converged after '+str(kk)+' iterations')
-                break
+                break'''
         return self.T
             
             
@@ -76,7 +77,7 @@ class ndt():
                 for jj in range(len(np.array(scan[labels==ii]))):
                     covs.append(self.Sigma[cc])
                 q.append(np.array(scan[labels==ii]-self.Mu[cc]))
-        return q, np.array(new_scans), covs
+        return np.concatenate(q), np.concatenate(np.array(new_scans)), covs
 
 
     def calc_Jacobi(self,x,theta):
@@ -91,13 +92,18 @@ def main():
     new_scan = np.load('test/new_scan.npy')
     plt.scatter(last_scan[0,:],last_scan[1,:])
     plt.scatter(new_scan[0,:],new_scan[1,:])
+    
     Ndt = ndt(last_scan,new_scan)
     Ndt.fit()
     T = Ndt.predict()
     new_scan_tranformed = Ndt.transform(new_scan.T,T).T
-    plt.scatter(last_scan[0,:],last_scan[1,:],c='k')
+    
+    labels = Ndt.kmeans.predict(last_scan.T)
+    plt.scatter(last_scan[0,:],last_scan[1,:],c=labels)
     plt.scatter(new_scan[0,:],new_scan[1,:],c='r')
     plt.scatter(new_scan_tranformed[0,:],new_scan_tranformed[1,:],c='b')
+    
+    
     plt.imshow(Ndt.H)
     T = Ndt.calc_t()
     res = 0.5
