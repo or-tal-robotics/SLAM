@@ -6,7 +6,7 @@ from nav_msgs.msg import OccupancyGrid
 import tf_conversions
 from sklearn.neighbors import NearestNeighbors as KNN
 from std_msgs.msg import Int8MultiArray
-from NDT_or import ndt
+from DENDT import dendt
 
 
 class occupancy_grid():
@@ -23,8 +23,9 @@ class occupancy_grid():
         if initialize == 0:
             self.new_scan = Z
             T0 = X - self.last_pose
-            Ndt = ndt(self.last_scan,self.new_scan,T0)
-            T = Ndt.T
+            bounds = [(-0.5+T0[0],0.5+T0[0]),(-0.5+T0[1],0.5+T0[1]),(-0.5+T0[2],0.5+T0[2])]
+            Dendt = dendt(last_scan=self.last_scan,new_scan=self.new_scan,bounds=bounds,maxiter=10)
+            T = Dendt.T
             X = T + self.last_pose
             self.last_scan = self.new_scan
             self.last_pose = X
