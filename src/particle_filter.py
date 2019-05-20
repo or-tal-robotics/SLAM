@@ -30,6 +30,7 @@ class ParticleFilter(object):
         self.init()   
         self.i_TH = 0.0  
         self.i_MU = [0.0 ,0.0]
+        self.nbrs = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.scan.obs())
         self.M_idxs = (np.linspace(0,len(self.scan.z.ranges)-1,20)).astype(np.int32)
         rospy.Subscriber('/odom', Odometry, self.get_odom) 
         rospy.Subscriber('/initialpose', PoseWithCovarianceStamped, self.init_pose)
@@ -46,15 +47,13 @@ class ParticleFilter(object):
         current_time = msg.header.stamp.secs 
         self.dt = current_time - self.last_time
         self.last_time = current_time
-        self.ind_map_update()
-        if np.abs(self.odom.twist.twist.linear.x)>0.05 or np.abs( self.odom.twist.twist.angular.z)>0.1:
+        if np.abs(self.odom.twist.twist.linear.x)>0.05 or np.abs( self.odom.twist.twist.angular.z)>0.05:
             self.prediction()
-        if self.update_TH() > 0.05: #and self.ctr%1 == 0:
+        if self.update_TH() > 0.1: #and self.ctr%1 == 0:
             self.likelihood_fild(self.map)
             self.i_TH = 0.0
             self.ctr = 1
             self.resampling()
-            
             #if 1/np.sum(self.weights**2) < self.Np/5:
              #   self.resampling()
 
@@ -76,7 +75,7 @@ class ParticleFilter(object):
 
         self.init(X0 = X, P0 = sigmas)
 
-    def init (self, X0 = [0,0,0], P0 = [[0.0001,0,0],[0,0.0001,0],[0,0,0.0001*np.pi*2]]):
+    def init (self, X0 = [0,0,0], P0 = [[1,0,0],[0,1,0],[0,0,np.pi*2]]):
         self.particles = np.random.multivariate_normal(X0, P0, self.Np)
         self.weights = np.ones (self.Np) / self.Np
 
@@ -87,10 +86,10 @@ class ParticleFilter(object):
         dot[:,1] = self.odom.twist.twist.linear.y
         dot[:,2] =  self.odom.twist.twist.angular.z
 
-        sigma_x = np.sqrt(self.odom.twist.covariance[0]) + 0.002
-        sigma_y = np.sqrt(self.odom.twist.covariance[7]) + 0.002
-        sigma_theta = np.sqrt(self.odom.twist.covariance[35]) + 0.05
- 
+        sigma_x = np.sqrt(self.odom.twist.covariance[0]) + 0.0001
+        sigma_y = np.sqrt(self.odom.twist.covariance[7]) + 0.0001
+        sigma_theta = np.sqrt(self.odom.twist.covariance[35]) + 0.0001
+
         #self.x_pose_cov = self.odom.pose.covariance[0] ############
         #self.y_pose_cov = self.odom.pose.covariance[7] ###########
         #self.theta_pose_cov = self.odom.pose.covariance[35] #########
@@ -113,17 +112,13 @@ class ParticleFilter(object):
 
 
     def ind_map_update(self):
-        self.i_MU[0] += np.abs(self.odom.twist.twist.linear.x * self.dt)
-        self.i_MU[1] += np.abs(self.odom.twist.twist.angular.z * self.dt)
+        self.i_MU += [self.odom.twist.twist.linear.x , self.odom.twist.twist.angular.z] * self.dt
 
     def likelihood_fild(self,map):
         print "likelihood"
         for ii in range(self.Np):
-            self.weights[ii] = map.get_Likelihood(self.particles[ii,:],self.scan.z,0.5)
-        if np.sum(self.weights) == 0 or np.sum(np.isnan(self.weights))> 0:
-            self.weights = np.ones(self.Np)/self.Np
-        else:
-            self.weights = self.weights / np.sum(self.weights)
+            self.weights[ii] = map.get_Likelihood(self.particles[ii,:],self.scan.z,1.1)
+        self.weights = self.weights / np.sum(self.weights)
 
 
     

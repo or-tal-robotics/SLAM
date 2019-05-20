@@ -37,10 +37,10 @@ class ndt():
             #print(q.shape)
             dT = np.array([0.0, 0.0, 0.0])
             for ii in range(len(self.new_scan_trans_filtered)):
-                self.J = self.calc_Jacobi(self.new_scan_trans_filtered[ii],self.T[2])
+                self.J = self.calc_Jacobi(self.T,self.new_scan_trans_filtered[ii])
                 qq = self.q[ii].dot(np.matmul( np.linalg.inv(self.covs[ii]),self.J))
                 #print(qq)
-                dq = self.calc_sd(self.new_scan_trans_filtered[ii],self.T[2])
+                dq = self.calc_sd(self.T,self.new_scan_trans_filtered[ii])
                 dtemp = np.zeros((3,3))
                 #print(q[ii],np.linalg.inv(covs[ii]),dq)
                 dtemp[2,2] = self.q[ii].dot(np.linalg.inv(self.covs[ii]).dot(dq))
@@ -80,12 +80,12 @@ class ndt():
         return np.concatenate(q), np.concatenate(np.array(new_scans)), covs
 
 
-    def calc_Jacobi(self,x,theta):
-        return np.array([[1,0,-x[0]*np.sin(theta)-x[1]*np.cos(theta)], [0,1,x[0]*np.cos(theta)-x[1]*np.sin(theta)]])
-    
-    def calc_sd(self,x,theta):
-        return np.array([[-x[0]*np.cos(theta)+x[1]*np.sin(theta)], [-x[0]*np.sin(theta)-x[1]*np.cos(theta)]])
-
+    def calc_Jacobi(self,T,X):
+        return np.array([[1,0,-X[0]*np.sin(T[2])-X[1]*np.cos(T[2])],
+                         [0,1,X[0]*np.cos(T[2])-X[1]*np.sin(T[2])]])
+    def calc_sd(self,T,X):
+        return np.array([[-X[0]*np.cos(T[2])+X[1]*np.sin(T[2])],
+                         [-X[0]*np.sin(T[2])-X[1]*np.cos(T[2])]])
 
 def main():
     last_scan = np.load('test/last_scan.npy')
