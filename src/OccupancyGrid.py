@@ -54,6 +54,7 @@ class occupancy_grid():
         self.objects_map[:,0] = self.objects_map[:,0]*self.res - self.initial_pose[0] 
         self.objects_map[:,1] = (self.y_shape - self.objects_map[:,1])*self.res - self.initial_pose[1]
         self.nbrs = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.objects_map)
+        print 'Map is updated!'
     
     def get_Likelihood(self,robot_origin,scan,s):
         z_star = self.scan2cart(robot_origin,scan,20)
