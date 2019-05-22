@@ -6,7 +6,7 @@ from nav_msgs.msg import OccupancyGrid
 import tf_conversions
 from sklearn.neighbors import NearestNeighbors as KNN
 from std_msgs.msg import Int8MultiArray
-from NDT_or import ndt
+from DENDT import dendt
 from laser_scan_get_map import MapClientLaserScanSubscriber  
 import random
 import geometry_msgs
@@ -26,7 +26,7 @@ class ParticleFilterRB():
         self.pub_estimated_pos = rospy.Publisher('/MCL_estimated_pose', PoseWithCovarianceStamped, queue_size = 60)
         self.map_publisher = rospy.Publisher('/map', OccupancyGrid, queue_size = 60)
         rospy.Subscriber('/odom', Odometry, self.get_odom)
-        self.scan = MapClientLaserScanSubscriber ()
+        self.scan = MapClientLaserScanSubscriber()
         self.last_time = rospy.Time.now().to_sec()
         self.Np = Np
         self.init()   
@@ -35,19 +35,14 @@ class ParticleFilterRB():
         self.res, self.grid_size, self.initial_pose, self.max_rays = res, grid_size, np.array(initial_pose), max_rays
         self.x_shape = int(grid_size[0]//res)
         self.y_shape = int(grid_size[1]//res)
+        self.map =-1*np.ones((self.x_shape,self.y_shape))
         
         
 
     def init (self, X0 = [0,0,0], P0 = [[0.0001,0,0],[0,0.0001,0],[0,0,0.0001*np.pi*2]]):
         self.particles = np.random.multivariate_normal(X0, P0, self.Np)
         self.weights = np.ones (self.Np) / self.Np
-        self.maps = []
-        self.objects_map_knn = []
-        self.objects_map = []
-        for ii in range(self.Np):
-            self.maps.append(-1*np.ones((self.x_shape,self.y_shape)))
-            self.objects_map_knn.append([])
-            self.objects_map.append([])
+        
         
     def get_odom(self, msg):  # callback function for odom topic
         self.odom = msg
@@ -76,11 +71,29 @@ class ParticleFilterRB():
         for ii in range(self.Np):
             self.maps[ii], self.objects_map_knn[ii], self.objects_map[ii] = self.update_map(map = self.maps[ii], scan = self.scan.z, X = self.particles[ii])
             self.weights[ii] = self.get_Likelihood(self.particles[ii],self.scan.z,self.objects_map[ii],self.objects_map_knn[ii],s = 3.5)
+            if np.isnan(self.weights[ii]):
+                self.weights[ii] = 1/self.Np
 
-    def update_map(self,map,scan,X=[0,0,0]):
+    
+    def update_map(self,scan,X=[0,0,0],initialize = 0):
         Z = self.scan2cart(X,scan,self.max_rays)
+        
+        if initialize == 0:
+            self.new_scan = Z
+            T0 = X - self.last_pose
+            bounds = [(-0.5+T0[0],0.5+T0[0]),(-0.5+T0[1],0.5+T0[1]),(-0.5+T0[2],0.5+T0[2])]
+            Dendt = dendt(last_scan=self.last_scan,new_scan=self.new_scan,bounds=bounds,maxiter=10)
+            T = Dendt.T
+            X = T + self.last_pose
+            self.last_scan = self.new_scan
+            self.last_pose = X
+        else:
+            self.last_scan = Z
+            self.last_pose = X
+
         idxs = self.cart2ind(Z)
         if idxs is not None:
+            #print idxs.shape
             robot_idx = ((X[0:2] + self.initial_pose) // self.res).astype(int)
             robot_idx[1] = -robot_idx[1] +  self.y_shape
             for ii in range(len(idxs)):
@@ -89,14 +102,19 @@ class ParticleFilterRB():
                     none_object_idxs = (np.stack((rr, cc)).astype(np.int))
                     bad_idxs = (none_object_idxs[:,0]>=self.x_shape) + (none_object_idxs[:,0]<0) +(none_object_idxs[:,1]>=self.y_shape) + (none_object_idxs[:,1]<0)
                     none_object_idxs = np.delete(none_object_idxs,np.where(bad_idxs),axis=0)
-                    map[none_object_idxs[0], none_object_idxs[1]] += -30
-                    map[self.map<-1] = 0
-                    map[idxs[ii,0],idxs[ii,1]] = 100
-        objects_map = np.argwhere(self.map==100)
-        objects_map[:,0] = self.objects_map[:,0]*self.res - self.initial_pose[0] 
-        objects_map[:,1] = (self.y_shape - self.objects_map[:,1])*self.res - self.initial_pose[1]
-        objects_map_knn = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.objects_map)
-        return map, objects_map_knn, objects_map
+                    self.map[none_object_idxs[0], none_object_idxs[1]] += -30
+                    self.map[self.map<-1] = 0
+                    self.map[idxs[ii,0],idxs[ii,1]] = 100
+                    #self.map[robot_idx[0],robot_idx[1]] = 100
+                    #self.map[0,0] = 100
+        #self.objects_map = (np.argwhere(self.map==100)*self.res) - self.initial_pose - 0.5*self.res*np.ones(2)
+        self.objects_map = np.argwhere(self.map==100)
+        self.objects_map[:,0] = self.objects_map[:,0]*self.res - self.initial_pose[0] 
+        self.objects_map[:,1] = (self.y_shape - self.objects_map[:,1])*self.res - self.initial_pose[1]
+        self.nbrs = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.objects_map)
+        print 'Map is updated!'
+        
+        
     
     def get_Likelihood(self,robot_origin,scan,objects_map,objects_map_knn,s):
         z_star = self.scan2cart(robot_origin,scan,20)
@@ -190,3 +208,32 @@ class ParticleFilterRB():
                             rospy.Time.now(),
                             self.laser_frame,
                             "map")
+        
+def main():
+
+    rospy.init_node('SLAM', anonymous = True)
+    PF = ParticleFilterRB(Np=100,max_rays = 100,grid_size = [30,30],initial_pose = [15,15])
+    PF.init()
+    PF.update_map(scan = PF.scan.z, initialize=1)
+    r = rospy.Rate(5)
+    PF.publish_occupancy_grid()
+    
+    while not rospy.is_shutdown():
+        PF.publish_occupancy_grid()
+        print 'runing!'
+        r.sleep()
+        PF.publish_particles()
+        if PF.i_MU[0] > 0.01 or PF.i_MU[1] > 0.01:
+            #print np.mean(PF.particles,axis = 0).shape
+            PF.update_map(X = np.mean(PF.particles,axis = 0),scan = PF.scan.z, initialize=0)
+            PF.i_MU = [0.0,0.0]
+            print 'updated map'
+            
+  
+
+    rospy.spin()
+
+
+if __name__ == "__main__":
+    main()
+
