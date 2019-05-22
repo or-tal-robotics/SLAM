@@ -17,45 +17,95 @@ import tf
 from matplotlib import pyplot as plt
 from scipy.stats import multivariate_normal
 from matplotlib.mlab import bivariate_normal
+from sensor_msgs.msg import LaserScan
+from nav_msgs.srv import GetMap
 
 class ParticleFilterRB():
     def __init__(self,Np = 100, res = 0.1, grid_size = [10,10], initial_pose = [5,5], max_rays = 30):
+        # ---- TF Broadcaster ---- #
         self.laser_tf_br = tf.TransformBroadcaster()
         self.laser_frame = rospy.get_param('~laser_frame')
+
+        # ---- Publishers ---- #
         self.pub_particlecloud = rospy.Publisher('/particlecloud', PoseArray, queue_size = 60)
         self.pub_estimated_pos = rospy.Publisher('/MCL_estimated_pose', PoseWithCovarianceStamped, queue_size = 60)
         self.map_publisher = rospy.Publisher('/map', OccupancyGrid, queue_size = 60)
-        rospy.Subscriber('/odom', Odometry, self.get_odom)
-        self.scan = MapClientLaserScanSubscriber()
-        self.last_time = rospy.Time.now().to_sec()
-        self.Np = Np
-        self.init()   
-        self.i_TH = 0.0  
-        self.i_MU = [0.0 ,0.0]
+        
+        # ---- Map params ---- #
         self.res, self.grid_size, self.initial_pose, self.max_rays = res, grid_size, np.array(initial_pose), max_rays
         self.x_shape = int(grid_size[0]//res)
         self.y_shape = int(grid_size[1]//res)
         self.map =-1*np.ones((self.x_shape,self.y_shape))
-        
+
+        self.last_time = rospy.Time.now().to_sec()
+        self.update_TH(reset=True) 
+        self.i_MU = [0.0 ,0.0]
+
+        # ---- Subscribers ---- #
+        rospy.Subscriber('/scan',LaserScan,self.get_scan)
+        rospy.Subscriber('/odom', Odometry, self.get_odom)
+        self.scan = rospy.wait_for_message("/scan",LaserScan)
+        self.odom = rospy.wait_for_message("/odom",Odometry)
+
+        # ---- Particle filter params ---- #
+        self.Np = Np
+        self.initialize_PF()   
         
 
-    def init (self, X0 = [0,0,0], P0 = [[0.0001,0,0],[0,0.0001,0],[0,0,0.0001*np.pi*2]]):
-        self.particles = np.random.multivariate_normal(X0, P0, self.Np)
-        self.weights = np.ones (self.Np) / self.Np
-        
-        
+    # ---- Calbackes ---- #
+    def get_scan(self, msg):
+        self.scan = msg
+         
     def get_odom(self, msg):  # callback function for odom topic
         self.odom = msg
-        current_time = msg.header.stamp.secs 
-        self.dt = current_time - self.last_time
-        self.last_time = current_time
+        self.update_dt(msg.header.stamp.secs)
         if np.abs(self.odom.twist.twist.linear.x)>0.05 or np.abs( self.odom.twist.twist.angular.z)>0.1:
             self.prediction()
-        if self.update_TH() > 0.05: #and self.ctr%1 == 0:
+        if self.update_TH(reset=False) > 0.05: #and self.ctr%1 == 0:
             self.update_particles()
-            self.i_TH = 0.0
+            self.update_TH(reset=True)
             self.ctr = 1
-            self.resampling()
+            self.resample()
+
+    # ---- Particle filter --- #
+
+    def prediction (self): #Odometry = Odometry massege. donot forget to initialize self.last_time = 
+        dot = np.zeros((self.Np,3))
+        dot[:,0] = self.odom.twist.twist.linear.x
+        dot[:,1] = self.odom.twist.twist.linear.y
+        dot[:,2] =  self.odom.twist.twist.angular.z
+        sigma_x = np.sqrt(self.odom.twist.covariance[0]) + 0.02
+        sigma_y = np.sqrt(self.odom.twist.covariance[7]) + 0.02
+        sigma_theta = np.sqrt(self.odom.twist.covariance[35]) + 0.02
+        delta = np.zeros((self.Np,3)) 
+        delta[:,2] = dot[:,2] * self.dt + sigma_theta * np.random.randn(self.Np) 
+        self.particles[:,2] += delta[:,2] 
+        delta[:,0] = (dot[:,0] + sigma_x * np.random.randn(self.Np)) * self.dt * np.cos(self.particles[:,2])  
+        delta[:,1] = (dot[:,0] + sigma_y * np.random.randn(self.Np)) * self.dt * np.sin(self.particles[:,2]) 
+        self.particles[:,0] += delta[:,0]
+        self.particles[:,1] += delta[:,1] 
+
+    def update_TH(self,reset = False):
+        if reset:
+            self.i_TH = 0.0
+        else:
+            self.i_TH += (self.odom.twist.twist.linear.x + self.odom.twist.twist.angular.z) * self.dt
+        return np.abs(self.i_TH)
+
+    def update_dt(self,current_time):
+        self.dt = current_time - self.last_time
+        self.last_time = current_time
+
+    def initialize_PF(self, X0 = [0,0,0], P0 = [[0.0001,0,0],[0,0.0001,0],[0,0,0.0001*np.pi*2]]):
+        self.particles = np.random.multivariate_normal(X0, P0, self.Np)
+        self.weights = np.ones (self.Np) / self.Np
+
+    def update_particles(self):
+        for ii in range(self.Np):
+            self.weights[ii] = self.get_Likelihood(self.particles[ii],s = 3.5)
+            if np.isnan(self.weights[ii]) or np.isinf(self.weights[ii]):
+                self.weights[ii] = 1/self.Np
+        self.weights = self.weights/np.sum(self.weights)
 
     def resample(self):
         index = np.random.choice(a = self.Np,size = self.Np,p = self.weights)
@@ -65,29 +115,59 @@ class ParticleFilterRB():
         self.particles[:,0] += 0.0001 * np.random.randn(self.Np) 
         self.particles[:,1] += 0.0001 * np.random.randn(self.Np) 
         self.particles[:,2] += 0.0002 * np.random.randn(self.Np) 
-            
 
-    def update_particles(self):
+    def publish_particles(self):
+        particle_pose = PoseArray()
+        particle_pose.header.frame_id = 'map'
+        particle_pose.header.stamp = rospy.Time.now()
+        particle_pose.poses = []
+        estimated_pose = PoseWithCovarianceStamped()
+        estimated_pose.header.frame_id = 'map'
+        estimated_pose.header.stamp = rospy.Time.now()
+        estimated_pose.pose.pose.position.x = np.mean(self.particles[:,0])
+        estimated_pose.pose.pose.position.y = np.mean(self.particles[:,1])
+        estimated_pose.pose.pose.position.z = 0.0
+        quaternion = tf_conversions.transformations.quaternion_from_euler(0, 0, np.mean(self.particles[:,2]) )
+        estimated_pose.pose.pose.orientation = geometry_msgs.msg.Quaternion(*quaternion)        
         for ii in range(self.Np):
-            self.maps[ii], self.objects_map_knn[ii], self.objects_map[ii] = self.update_map(map = self.maps[ii], scan = self.scan.z, X = self.particles[ii])
-            self.weights[ii] = self.get_Likelihood(self.particles[ii],self.scan.z,self.objects_map[ii],self.objects_map_knn[ii],s = 3.5)
-            if np.isnan(self.weights[ii]):
-                self.weights[ii] = 1/self.Np
+            pose = geometry_msgs.msg.Pose()
+            point_P = (self.particles[ii,0],self.particles[ii,1],0.0)
+            pose.position = geometry_msgs.msg.Point(*point_P)
+            quaternion = tf_conversions.transformations.quaternion_from_euler(0, 0, self.particles[ii,2]) 
+            pose.orientation = geometry_msgs.msg.Quaternion(*quaternion)
+            particle_pose.poses.append(pose)
+        self.pub_particlecloud.publish(particle_pose)
+        self.pub_estimated_pos.publish(estimated_pose)
+        self.laser_tf_br.sendTransform((np.mean(self.particles[:,0]) , np.mean(self.particles[:,1]) , 0),
+                            (estimated_pose.pose.pose.orientation.x,estimated_pose.pose.pose.orientation.y,estimated_pose.pose.pose.orientation.z,estimated_pose.pose.pose.orientation.w),
+                            rospy.Time.now(),
+                            self.laser_frame,
+                            "map")
 
+    def bounds(self,T):
+        max_x = np.max(self.particles[:,0]) + T[0]
+        min_x = np.min(self.particles[:,0]) + T[0]
+        max_y = np.max(self.particles[:,1]) + T[1]
+        min_y = np.min(self.particles[:,1]) + T[1]
+        max_t = np.max(self.particles[:,2]) + T[2]
+        min_t = np.min(self.particles[:,2]) + T[2]
+        return [(max_x,min_x),(max_y,min_y),(max_t,min_t)]
     
-    def update_map(self,scan,X=[0,0,0],initialize = 0):
-        Z = self.scan2cart(X,scan,self.max_rays)
-        
+    # ---- Map ---- #              
+    def update_map(self,initialize = 0):
+        X = np.mean(self.particles,axis = 0)
         if initialize == 0:
+            Z = self.scan2cart(X,self.scan,self.max_rays)
             self.new_scan = Z
             T0 = X - self.last_pose
-            bounds = [(-0.5+T0[0],0.5+T0[0]),(-0.5+T0[1],0.5+T0[1]),(-0.5+T0[2],0.5+T0[2])]
-            Dendt = dendt(last_scan=self.last_scan,new_scan=self.new_scan,bounds=bounds,maxiter=10)
+            Dendt = dendt(last_scan=self.last_scan.T,new_scan=self.new_scan.T,bounds=self.bounds(T0),maxiter=10)
             T = Dendt.T
             X = T + self.last_pose
             self.last_scan = self.new_scan
             self.last_pose = X
+            Z = Dendt.transform(self.new_scan.T,T)
         else:
+            Z = self.scan2cart([0.0,0.0,0.0],self.scan,self.max_rays)
             self.last_scan = Z
             self.last_pose = X
 
@@ -105,9 +185,6 @@ class ParticleFilterRB():
                     self.map[none_object_idxs[0], none_object_idxs[1]] += -30
                     self.map[self.map<-1] = 0
                     self.map[idxs[ii,0],idxs[ii,1]] = 100
-                    #self.map[robot_idx[0],robot_idx[1]] = 100
-                    #self.map[0,0] = 100
-        #self.objects_map = (np.argwhere(self.map==100)*self.res) - self.initial_pose - 0.5*self.res*np.ones(2)
         self.objects_map = np.argwhere(self.map==100)
         self.objects_map[:,0] = self.objects_map[:,0]*self.res - self.initial_pose[0] 
         self.objects_map[:,1] = (self.y_shape - self.objects_map[:,1])*self.res - self.initial_pose[1]
@@ -116,11 +193,11 @@ class ParticleFilterRB():
         
         
     
-    def get_Likelihood(self,robot_origin,scan,objects_map,objects_map_knn,s):
-        z_star = self.scan2cart(robot_origin,scan,20)
-        _, indices = objects_map_knn.kneighbors(z_star.T)
-        z = objects_map[indices].reshape(z_star.shape)
-        return np.prod(np.exp(-s* np.linalg.norm(z_star-z,axis=1)**2))
+    def get_Likelihood(self,robot_origin,s = 1.0):
+        z_star = self.scan2cart(robot_origin,self.scan,20)
+        _, indices = self.nbrs.kneighbors(z_star.T)
+        z = self.objects_map[indices].reshape(z_star.shape)
+        return np.sum(np.exp(-s* np.linalg.norm(z_star-z,axis=1)**2))
 
 
 
@@ -181,40 +258,14 @@ class ParticleFilterRB():
         self.map_publisher.publish(grid)
 
     
-    def publish_particles(self):
-        particle_pose = PoseArray()
-        particle_pose.header.frame_id = 'map'
-        particle_pose.header.stamp = rospy.Time.now()
-        particle_pose.poses = []
-        estimated_pose = PoseWithCovarianceStamped()
-        estimated_pose.header.frame_id = 'map'
-        estimated_pose.header.stamp = rospy.Time.now()
-        estimated_pose.pose.pose.position.x = np.mean(self.particles[:,0])
-        estimated_pose.pose.pose.position.y = np.mean(self.particles[:,1])
-        estimated_pose.pose.pose.position.z = 0.0
-        quaternion = tf_conversions.transformations.quaternion_from_euler(0, 0, np.mean(self.particles[:,2]) )
-        estimated_pose.pose.pose.orientation = geometry_msgs.msg.Quaternion(*quaternion)        
-        for ii in range(self.Np):
-            pose = geometry_msgs.msg.Pose()
-            point_P = (self.particles[ii,0],self.particles[ii,1],0.0)
-            pose.position = geometry_msgs.msg.Point(*point_P)
-            quaternion = tf_conversions.transformations.quaternion_from_euler(0, 0, self.particles[ii,2]) 
-            pose.orientation = geometry_msgs.msg.Quaternion(*quaternion)
-            particle_pose.poses.append(pose)
-        self.pub_particlecloud.publish(particle_pose)
-        self.pub_estimated_pos.publish(estimated_pose)
-        self.laser_tf_br.sendTransform((np.mean(self.particles[:,0]) , np.mean(self.particles[:,1]) , 0),
-                            (estimated_pose.pose.pose.orientation.x,estimated_pose.pose.pose.orientation.y,estimated_pose.pose.pose.orientation.z,estimated_pose.pose.pose.orientation.w),
-                            rospy.Time.now(),
-                            self.laser_frame,
-                            "map")
+    
         
 def main():
 
     rospy.init_node('SLAM', anonymous = True)
     PF = ParticleFilterRB(Np=100,max_rays = 100,grid_size = [30,30],initial_pose = [15,15])
-    PF.init()
-    PF.update_map(scan = PF.scan.z, initialize=1)
+    PF.initialize_PF()
+    PF.update_map(initialize=1)
     r = rospy.Rate(5)
     PF.publish_occupancy_grid()
     
@@ -223,9 +274,9 @@ def main():
         print 'runing!'
         r.sleep()
         PF.publish_particles()
-        if PF.i_MU[0] > 0.01 or PF.i_MU[1] > 0.01:
+        if PF.i_MU[0] > 0.05 or PF.i_MU[1] > 0.1:
             #print np.mean(PF.particles,axis = 0).shape
-            PF.update_map(X = np.mean(PF.particles,axis = 0),scan = PF.scan.z, initialize=0)
+            PF.update_map(initialize=0)
             PF.i_MU = [0.0,0.0]
             print 'updated map'
             
