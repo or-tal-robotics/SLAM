@@ -3,7 +3,7 @@
 
 <include file="$(find SLAM)/launch/joystick_ABot.launch" />
 
-  <node name="slam" pkg="SLAM" type="ParticleFilterRB.py" output="screen">
+  <node name="slam" pkg="SLAM" type="particle_filter_pm.py" output="screen">
   <param name="laser_frame" type="string" value="base_laser"/>
   </node>
 

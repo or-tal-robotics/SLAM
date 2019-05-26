@@ -23,6 +23,9 @@ from nav_msgs.srv import GetMap
 
 class ParticleFilterPm():
     def __init__(self,Np = 100, max_rays = 30):
+        self.i_TH = 0.0
+        self.max_rays = max_rays
+        self.last_time = rospy.Time.now().to_sec()
         # ---- TF Broadcaster ---- #
         self.laser_tf_br = tf.TransformBroadcaster()
         self.laser_frame = rospy.get_param('~laser_frame')
@@ -55,6 +58,7 @@ class ParticleFilterPm():
         if np.abs(self.odom.twist.twist.linear.x)>0.05 or np.abs( self.odom.twist.twist.angular.z)>0.1:
             self.prediction()
         if self.update_TH(reset=False) > 0.05: #and self.ctr%1 == 0:
+            self.update_map()
             self.update_particles()
             self.update_TH(reset=True)
             self.ctr = 1
@@ -153,41 +157,26 @@ class ParticleFilterPm():
             Z = self.scan2cart(X,self.scan,self.max_rays)
             self.new_scan = Z
             T0 = X - self.last_pose
-            Dendt = dendt(last_scan=self.last_scan.T,new_scan=self.new_scan.T,bounds=self.bounds(T0),maxiter=10)
+            Dendt = dendt(last_scan=self.last_scan,new_scan=self.new_scan,bounds=self.bounds(T0),maxiter=10)
             T = Dendt.T
             X = T + self.last_pose
             self.last_scan = self.new_scan
             self.last_pose = X
             Z = Dendt.transform(self.new_scan.T,T)
+            
             ranges, indices = self.nbrs.kneighbors(Z)
-            indices = indices[ranges>0.2]
+            print ranges>0.2
+            print self.objects_map.shape,Z[ranges>0.2].shape
+            self.objects_map = np.append(self.objects_map,Z[ranges>0.2].T,axis = 0)
+            self.nbrs = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.objects_map)
+            plt.scatter(self.objects_map[:,0],self.objects_map[:,1])
             
 
         else:
             self.objects_map = self.scan2cart([0.0,0.0,0.0],self.scan,self.max_rays)
             self.nbrs = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.objects_map)
-            self.last_scan = Z
+            self.last_scan = self.objects_map
             self.last_pose = X
-
-        idxs = self.cart2ind(Z)
-        if idxs is not None:
-            #print idxs.shape
-            robot_idx = ((X[0:2] + self.initial_pose) // self.res).astype(int)
-            robot_idx[1] = -robot_idx[1] +  self.y_shape
-            for ii in range(len(idxs)):
-                rr, cc = line(robot_idx[0], robot_idx[1], idxs[ii,0], idxs[ii,1])
-                if len(rr)>10:
-                    none_object_idxs = (np.stack((rr, cc)).astype(np.int))
-                    bad_idxs = (none_object_idxs[:,0]>=self.x_shape) + (none_object_idxs[:,0]<0) +(none_object_idxs[:,1]>=self.y_shape) + (none_object_idxs[:,1]<0)
-                    none_object_idxs = np.delete(none_object_idxs,np.where(bad_idxs),axis=0)
-                    self.map[none_object_idxs[0], none_object_idxs[1]] += -30
-                    self.map[self.map<-1] = 0
-                    self.map[idxs[ii,0],idxs[ii,1]] = 100
-        self.objects_map = np.argwhere(self.map==100)
-        self.objects_map[:,0] = self.objects_map[:,0]*self.res - self.initial_pose[0] 
-        self.objects_map[:,1] = (self.y_shape - self.objects_map[:,1])*self.res - self.initial_pose[1]
-        self.nbrs = KNN(n_neighbors=1, algorithm='ball_tree').fit(self.objects_map)
-        print 'Map is updated!'
         
         
     
@@ -196,20 +185,6 @@ class ParticleFilterPm():
         _, indices = self.nbrs.kneighbors(z_star.T)
         z = self.objects_map[indices].reshape(z_star.shape)
         return np.sum(np.exp(-s* np.linalg.norm(z_star-z,axis=1)**2))
-
-
-
-    def cart2ind(self,Z):
-        #print Z.shape ,self.initial_pose.shape
-        idxs = ((Z.T + self.initial_pose) // self.res).astype(int)
-        idxs[:,1] = -idxs[:,1] + self.y_shape
-        #print idxs[:,0]
-        bad_idxs = (idxs[:,0]>=self.x_shape) + (idxs[:,0]<0) +(idxs[:,1]>=self.y_shape) + (idxs[:,1]<0)
-        idxs = np.delete(idxs,np.where(bad_idxs),axis=0)
-        if idxs.shape[1] == 2:
-            return idxs
-        else:
-            print 'Bad idxs'
 
 
 
@@ -261,22 +236,16 @@ class ParticleFilterPm():
 def main():
 
     rospy.init_node('SLAM', anonymous = True)
-    PF = ParticleFilterRB(Np=100,max_rays = 100,grid_size = [30,30],initial_pose = [15,15])
+    PF = ParticleFilterPm()
     PF.initialize_PF()
     PF.update_map(initialize=1)
     r = rospy.Rate(5)
-    PF.publish_occupancy_grid()
     
     while not rospy.is_shutdown():
-        PF.publish_occupancy_grid()
         print 'runing!'
         r.sleep()
         PF.publish_particles()
-        if PF.i_MU[0] > 0.05 or PF.i_MU[1] > 0.1:
-            #print np.mean(PF.particles,axis = 0).shape
-            PF.update_map(initialize=0)
-            PF.i_MU = [0.0,0.0]
-            print 'updated map'
+    
             
   
 
