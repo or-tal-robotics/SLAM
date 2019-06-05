@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 import time
 
 class dendt():
-    def __init__(self,last_scan,new_scan,bounds,n = 10, reg = 0.0005, nn = 5, maxiter=200,popsize=6,tol=0.0001):
+    def __init__(self,last_scan,new_scan,bounds,n = 30, reg = 0.0005, nn = 5, maxiter=200,popsize=6,tol=0.0001):
         self.new_scan = new_scan
         self.Mus, self.Sigmas = self.ndt2(last_scan.T,n,reg, nn)
         self.result = differential_evolution(self.func, bounds,maxiter=maxiter,popsize=popsize,tol=tol)
         self.T = self.result.x
         
-    def ndt2(self,X,n = 10, reg = 0.0005, nn = 5):
+    def ndt2(self,X,n = 30, reg = 0.0005, nn = 5):
         #idxs = np.random.choice(len(X),n)
         idxs = np.linspace(0,len(X)-1,n).astype(int)
         Mus = X[idxs]

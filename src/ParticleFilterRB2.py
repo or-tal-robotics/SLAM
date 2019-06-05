@@ -67,7 +67,6 @@ class ParticleFilterRB():
             self.update_map(initialize=0)
             self.update_map_TH(reset=True)
             if self.update_TH(reset=False) > 0.05: #and self.ctr%1 == 0:
-                self.update_particles()
                 self.update_TH(reset=True)
                 self.ctr = 1
                 self.resample()
@@ -168,25 +167,15 @@ class ParticleFilterRB():
     
     # ---- Map ---- #              
     def update_map(self,initialize = 0):
-        X = np.mean(self.particles,axis = 0)
         if initialize == 0:
+            self.update_particles()
+            X = self.particles[np.argmax(self.weights)]
             Z = self.scan2cart(X,self.scan,self.max_rays)
-            self.new_scan = Z
-            T0 = X - self.last_pose
-            Dendt = dendt(last_scan=self.last_scan,new_scan=self.new_scan,bounds=self.bounds(T0),popsize=3,tol=0.0001,n=15,maxiter=2)
-            T = Dendt.T
-            print T0,T
-            if np.linalg.norm(T0-T) > 0.5:
-                T = T0
-            X = T + self.last_pose
-            self.last_scan = self.new_scan
-            self.last_pose = X
-            Z = Dendt.transform(self.new_scan.T,T)
-            Z = Z.T
         else:
+            X = np.mean(self.particles,axis = 0)
             Z = self.scan2cart([0.0,0.0,0.0],self.scan,self.max_rays)
-            self.last_scan = Z
-            self.last_pose = X
+
+        
 
         idxs = self.cart2ind(Z)
         #print idxs

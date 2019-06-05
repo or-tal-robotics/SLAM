@@ -26,6 +26,9 @@ class occupancy_grid():
             bounds = [(-0.5+T0[0],0.5+T0[0]),(-0.5+T0[1],0.5+T0[1]),(-0.5+T0[2],0.5+T0[2])]
             Dendt = dendt(last_scan=self.last_scan,new_scan=self.new_scan,bounds=bounds,maxiter=10)
             T = Dendt.T
+            print T0,T
+            if np.linalg.norm(T0-T) > 0.5:
+                T = T0
             X = T + self.last_pose
             self.last_scan = self.new_scan
             self.last_pose = X
