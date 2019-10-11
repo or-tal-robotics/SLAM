@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <launch>
 
-<include file="$(find SLAM)/launch/joystick_ABot.launch" />
+<include file="$(find SLAM)/launch/ABot.launch" />
 
 <node pkg="hector_mapping" type="hector_mapping" name="hector_mapping" output="screen">
 
@@ -9,7 +9,7 @@
 <param name="scan_topic" value="scan" />
 
 <!-- Frame names -->
-<param name="base_frame" value="base_laser" />
+<param name="base_frame" value="base_link" />
 <param name="odom_frame" value="odom"/>
 <param name="output_timing" value="false"/>
 
